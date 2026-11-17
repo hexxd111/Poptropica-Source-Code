@@ -1,0 +1,124 @@
+Copilot Notes - base.php flow
+================================
+
+Scope and evidence
+------------------
+The checked-out repository is /workspaces/Poptropica-Source-Code. Its README
+describes the contents as decompiled Framework.swf and Gameplay.swf source.
+There is no base.php file and no PHP source file in the repository. The
+available source is ActionScript (.as), including the frame actions and
+decompiled classes for framework.swf and gameplay.swf.
+
+Therefore, these notes describe what the ActionScript sends to base.php and
+what it does before the request. They cannot establish what base.php does on
+the server, how it interprets a request, or what page/SWF it returns.
+
+Framework's normal startup path
+-------------------------------
+1. framework.swf's frame 8 action constructs com.poptropica.Framework.
+2. Framework creates the PopModel, PopController, and MainView, registers the
+   view as a model observer, and executes StartUpCommand.
+3. StartUpCommand records the framework root clip and environment, chooses a
+   startup state/path (the path defaults to "gameplay"), defaults the island
+   and description to "Home", and sets gameplay_url to "gameplay.swf".
+4. PopController's startup sequence loads a prefix, loads configuration XML,
+   then notifies the views to retrieve gameplay.
+5. GameplayLoaderView creates a locked gameplay container and loads
+   gameplay.swf into it. After the gameplay scene is visible, it signals the
+   controller that gameplay loaded and the sequence continues.
+6. The controller extracts gameplay variables, runs compatibility
+   workarounds, builds the appropriate view/path, and loads the ad wrapper.
+
+This is the framework-to-gameplay load sequence. It is not an unconditional
+navigation to base.php.
+
+Gameplay's first-frame setup
+----------------------------
+gameplay.swf/scripts/frame_1/DoAction.as defines many shared game functions
+and initializes the gameplay runtime. Among other things, it:
+
+- Reads/writes local SharedObjects for settings and trace preferences.
+- Checks/refreshes a server prefix using /getPrefix.php (the settings cache
+  refreshes on a 30-minute schedule).
+- Sets up debugging, the shared PopModel/PopController, ad and gameplay
+  views, and the companion proxy.
+- Gets island/description values from the framework model, chooses a scene
+  SWF path, and loads that scene into the camera. The scene-load callback
+  advances the gameplay timeline.
+- Initializes game UI, navigation controls, camera and character behavior,
+  scene tracking, and multiplayer helpers.
+
+Later gameplay frame actions continue scene setup, guest/account handling,
+and multiplayer setup. The presence of base.php-related functions in frame 1
+does not itself mean they immediately run when frame 1 executes; the
+base.php navigation calls occur on specific login/timeout paths below.
+
+Observed direct base.php callers
+--------------------------------
+
+A. Successful account login
+
+- tryLogin(username, hash) POSTs login and pass_hash to the prefixed
+  /login.php endpoint.
+- If the reply's answer is "ok", doLogin parses the reply JSON and updates
+  the avatar and the local "Char" SharedObject. The data handled includes the
+  look/login, island and room/position, visited map, games and scores,
+  membership fields, user data, picked items, registration/database IDs,
+  credits, and recent activity.
+- doLogin creates a root clip named "exit" and assigns it room, island, and
+  startup_path = "home". It also sets login tracking and character
+  demographic fields, saves parent-email/account fields, flushes the local
+  SharedObject, and calls loadBase().
+- loadBase defaults a missing island to "Early", then calls
+  avatar.updateIslandData(island, callback). When that callback runs,
+  loadBaseInternal calls:
+
+      _root.exit.getURL("base.php", "_self", "POST")
+
+The visible caller therefore requests base.php in the current window using
+POST after successful login and after the island data update callback. The
+"exit" clip has room, island, and startup_path properties at this point.
+Those are the values visibly attached to the target clip; the PHP code is
+absent, so the exact submitted request fields and server-side handling cannot
+be verified from this repository alone.
+
+B. Multiplayer inactivity/session return
+
+- In gameplay frame 4, a common scene using the Red5 multiplayer path starts
+  a timer with timeoutInterval = 300000 (five minutes). Mouse movement or key
+  release resets that timer.
+- When kick() runs, it creates loader_mc. For a party room it assigns room
+  and island from the saved lastRoom/lastIsland values. Otherwise it assigns
+  title from roomName[islandMain], room = islandMain, and island = island.
+- It then calls:
+
+      loader_mc.getURL("base.php", "_self", "POST")
+
+This is another current-window POST navigation, apparently used to return or
+reload from the multiplayer session. The actual server behavior is not in
+the repository.
+
+Other related references
+------------------------
+- Gameplay requests other PHP endpoints, including /getPrefix.php,
+  /getMMOPrefix.php, /login.php, and /save_highscore.php. These establish
+  that gameplay relies on server-side PHP services, but do not reveal
+  base.php's implementation.
+- Some code checks for a development URL containing /pop/base. These are
+  environment/URL checks, not implementations of base.php.
+- The code in gameplay frame 3 also avoids loading a vendor cart for certain
+  local/base URLs; this is separate from the direct base.php POST callers.
+
+What cannot be concluded
+------------------------
+Without base.php or server-side code, it is not possible to say whether it
+validates login/session state, persists anything, builds an HTML response,
+selects an island/room, embeds either SWF, redirects, or transforms the
+properties attached to the ActionScript movie clips. Those details would be
+speculation. The grounded conclusion is that ActionScript uses base.php as a
+POST navigation target after successful login and for a multiplayer kick/
+return path, with room/island-related values attached to the request target.
+
+Repository source files were only read; no code or repository folders were
+changed. This notes file is in the repository root at
+/workspaces/Poptropica-Source-Code/Copilot Notes.txt.
